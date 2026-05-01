@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import logging
 from typing import Any
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
@@ -26,6 +27,10 @@ from .constants import (
 )
 from .geometry import clamp, clamp_area_to_screen
 from .models import AppSettings, OverlayStyle, ScreenRect, TranslationArea
+from .text_painter import draw_outlined_text
+
+
+logger = logging.getLogger(__name__)
 
 
 class PreviewWidget(QOpenGLWidget):
@@ -46,6 +51,7 @@ class PreviewWidget(QOpenGLWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        logger.info("Preview widget initialized")
 
     def set_settings(self, settings: AppSettings) -> None:
         self.settings = settings
@@ -92,7 +98,10 @@ class PreviewWidget(QOpenGLWidget):
         self.ensure_view()
         target = QRectF(
             self.preview_offset,
-            QSize(round(self.frame.width() * self.preview_scale), round(self.frame.height() * self.preview_scale)),
+            QSize(
+                round(self.frame.width() * self.preview_scale),
+                round(self.frame.height() * self.preview_scale),
+            ),
         )
         painter.drawImage(target, self.frame)
         self.draw_area_frame(painter)
@@ -102,7 +111,10 @@ class PreviewWidget(QOpenGLWidget):
     def ensure_view(self) -> None:
         if self.frame.isNull() or self.width() <= 0 or self.height() <= 0:
             return
-        fit_scale = min(self.width() / self.frame.width(), self.height() / self.frame.height())
+        fit_scale = min(
+            self.width() / self.frame.width(),
+            self.height() / self.frame.height(),
+        )
         self.preview_scale = fit_scale * self.preview_zoom
         display_width = self.frame.width() * self.preview_scale
         display_height = self.frame.height() * self.preview_scale
@@ -112,9 +124,18 @@ class PreviewWidget(QOpenGLWidget):
                 (self.height() - display_height) / 2,
             )
             self.view_initialized = True
-        self.preview_offset = self.clamped_offset(self.preview_offset, display_width, display_height)
+        self.preview_offset = self.clamped_offset(
+            self.preview_offset,
+            display_width,
+            display_height,
+        )
 
-    def clamped_offset(self, offset: QPointF, display_width: float, display_height: float) -> QPointF:
+    def clamped_offset(
+        self,
+        offset: QPointF,
+        display_width: float,
+        display_height: float,
+    ) -> QPointF:
         horizontal_margin = self.width() / 2
         vertical_margin = self.height() / 2
 
@@ -148,7 +169,10 @@ class PreviewWidget(QOpenGLWidget):
 
         cursor = event.position()
         screen_x, screen_y = self.preview_to_screen(cursor.x(), cursor.y())
-        fit_scale = min(self.width() / self.frame.width(), self.height() / self.frame.height())
+        fit_scale = min(
+            self.width() / self.frame.width(),
+            self.height() / self.frame.height(),
+        )
         new_scale = fit_scale * new_zoom
         display_width = self.frame.width() * new_scale
         display_height = self.frame.height() * new_scale
@@ -166,7 +190,12 @@ class PreviewWidget(QOpenGLWidget):
 
         self.preview_zoom = new_zoom
         self.preview_scale = new_scale
-        self.preview_offset = self.clamped_offset(new_offset, display_width, display_height)
+        self.preview_offset = self.clamped_offset(
+            new_offset,
+            display_width,
+            display_height,
+        )
+        logger.debug("Preview zoom changed from %.2f to %.2f", old_zoom, new_zoom)
         self.update()
 
     def mousePressEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
@@ -208,7 +237,10 @@ class PreviewWidget(QOpenGLWidget):
 
         if self.drag_state is None:
             return
-        current_x, current_y = self.preview_to_screen(event.position().x(), event.position().y())
+        current_x, current_y = self.preview_to_screen(
+            event.position().x(),
+            event.position().y(),
+        )
         start_x, start_y = self.drag_state["start_screen"]
         dx = current_x - start_x
         dy = current_y - start_y
@@ -268,7 +300,9 @@ class PreviewWidget(QOpenGLWidget):
 
     def hit_test_area(self, point: QPointF, rect: QRectF) -> str | None:
         for name, handle in self.area_handles(rect).items():
-            if abs(point.x() - handle.x()) <= HANDLE_RADIUS + 4 and abs(point.y() - handle.y()) <= HANDLE_RADIUS + 4:
+            horizontal_hit = abs(point.x() - handle.x()) <= HANDLE_RADIUS + 4
+            vertical_hit = abs(point.y() - handle.y()) <= HANDLE_RADIUS + 4
+            if horizontal_hit and vertical_hit:
                 return name
         if rect.left() - EDGE_HIT_RADIUS <= point.x() <= rect.right() + EDGE_HIT_RADIUS:
             if abs(point.y() - rect.top()) <= EDGE_HIT_RADIUS:
@@ -326,11 +360,12 @@ class PreviewWidget(QOpenGLWidget):
         sample_width = sample_screen_width * self.preview_scale
         sample_height = sample_screen_height * self.preview_scale
         padding = max(1, style.padding * self.preview_scale)
+        outline_width = max(0, round(style.text_outline_width * self.preview_scale))
         font_size = self.fit_sample_font_size(
             sample_text,
             style,
-            max(8, sample_width - padding * 2),
-            max(8, sample_height - padding * 2),
+            max(8, sample_width - padding * 2 - outline_width * 2),
+            max(8, sample_height - padding * 2 - outline_width * 2),
         )
 
         bg = QColor(style.bg_color)
@@ -339,17 +374,20 @@ class PreviewWidget(QOpenGLWidget):
         painter.setPen(QPen(QColor(style.border_color), 2))
         painter.drawRect(QRectF(sample_x, sample_y, sample_width, sample_height))
 
-        painter.setPen(QColor(style.text_color))
-        painter.setFont(QFont(style.font_family, font_size))
-        painter.drawText(
+        draw_outlined_text(
+            painter,
             QRectF(
-                sample_x + padding,
-                sample_y + padding,
-                max(8, sample_width - padding * 2),
-                max(8, sample_height - padding * 2),
+                sample_x + padding + outline_width,
+                sample_y + padding + outline_width,
+                max(8, sample_width - padding * 2 - outline_width * 2),
+                max(8, sample_height - padding * 2 - outline_width * 2),
             ),
-            Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
             sample_text,
+            QFont(style.font_family, font_size),
+            style.text_color,
+            style.text_outline_color,
+            outline_width,
+            Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
         )
 
     def fit_sample_font_size(

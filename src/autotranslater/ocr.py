@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
 from PySide6.QtGui import QImage
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -27,6 +31,11 @@ class DummyOcrEngine:
     name = "fallback OCR"
 
     def recognize(self, image: QImage) -> list[DetectedText]:
+        logger.debug(
+            "Dummy OCR requested for image size=%sx%s",
+            image.width(),
+            image.height(),
+        )
         width = max(120, min(460, image.width() - 48))
         height = max(64, min(140, image.height() - 48))
         return [
@@ -53,7 +62,9 @@ class PytesseractOcrEngine:
             import PIL.Image  # noqa: F401
             import pytesseract  # noqa: F401
         except ImportError:
+            logger.info("pytesseract/Pillow are not installed; using fallback OCR")
             return False
+        logger.info("pytesseract/Pillow imports are available")
         return True
 
     def recognize(self, image: QImage) -> list[DetectedText]:
@@ -61,6 +72,12 @@ class PytesseractOcrEngine:
         from PIL import Image
         from pytesseract import Output
 
+        logger.info(
+            "Running pytesseract OCR on image size=%sx%s with languages=%s",
+            image.width(),
+            image.height(),
+            self.languages,
+        )
         qimage = image.convertToFormat(QImage.Format.Format_RGBA8888)
         data = bytes(qimage.bits())
         pil_image = Image.frombytes(
@@ -106,8 +123,14 @@ class PytesseractOcrEngine:
             entry["confidences"].append(confidence)
             entry["left"] = min(int(entry["left"]), int(raw["left"][index]))
             entry["top"] = min(int(entry["top"]), int(raw["top"][index]))
-            entry["right"] = max(int(entry["right"]), int(raw["left"][index]) + int(raw["width"][index]))
-            entry["bottom"] = max(int(entry["bottom"]), int(raw["top"][index]) + int(raw["height"][index]))
+            entry["right"] = max(
+                int(entry["right"]),
+                int(raw["left"][index]) + int(raw["width"][index]),
+            )
+            entry["bottom"] = max(
+                int(entry["bottom"]),
+                int(raw["top"][index]) + int(raw["height"][index]),
+            )
 
         detections: list[DetectedText] = []
         for entry in grouped.values():
@@ -127,6 +150,7 @@ class PytesseractOcrEngine:
                     confidence=sum(confidences) / max(1, len(confidences)),
                 )
             )
+        logger.info("pytesseract produced %s text line detections", len(detections))
         return detections
 
     @staticmethod
@@ -139,6 +163,7 @@ class PytesseractOcrEngine:
 
 def create_ocr_engine() -> OcrEngine:
     if PytesseractOcrEngine.available():
+        logger.info("Selected OCR engine: pytesseract")
         return PytesseractOcrEngine()
+    logger.info("Selected OCR engine: fallback")
     return DummyOcrEngine()
-

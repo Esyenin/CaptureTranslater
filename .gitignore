@@ -9,6 +9,7 @@ env/
 .vscode/
 
 autotranslater.settings.json
+logs/
 
 dist/
 build/

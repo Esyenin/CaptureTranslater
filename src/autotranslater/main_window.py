@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import logging
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QPoint, QRectF, Qt
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QFileDialog,
     QFontComboBox,
     QFormLayout,
     QFrame,
@@ -18,6 +21,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QPushButton,
+    QScrollArea,
     QSlider,
     QSpinBox,
     QSplitter,
@@ -32,11 +36,13 @@ from .constants import (
     APP_NAME,
     DEFAULT_PREVIEW_FPS,
     FPS_CHOICES,
+    LOG_PATH,
     MAX_PREVIEW_FPS,
     MIN_AREA_SIZE,
     PREVIEW_BACKGROUND,
     SETTINGS_PATH,
 )
+from .font_manager import FontRegistry, unique_font_paths
 from .geometry import clamp_area_to_screen
 from .models import AppSettings, OverlayStyle, ScreenRect, TranslationArea
 from .overlay import OverlayWindow
@@ -46,13 +52,18 @@ from .pipeline import OcrPipeline
 from .settings_store import load_settings, save_settings
 
 
+logger = logging.getLogger(__name__)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.resize(1180, 760)
         self.screen = get_virtual_screen_rect()
+        self.font_registry = FontRegistry()
         self.saved_settings = load_settings(self.screen)
+        self.font_registry.load_paths(self.saved_settings.style.custom_font_paths)
         self.draft_settings = copy.deepcopy(self.saved_settings)
         self.syncing = False
         self.dirty = False
@@ -76,17 +87,22 @@ class MainWindow(QMainWindow):
         self.area_height = QSpinBox()
         self.bg_button = QPushButton()
         self.text_button = QPushButton()
+        self.text_outline_button = QPushButton()
         self.border_button = QPushButton()
         self.marker_button = QPushButton()
         self.alpha_slider = QSlider(Qt.Orientation.Horizontal)
         self.font_combo = QFontComboBox()
+        self.add_font_button = QPushButton("Добавить...")
+        self.custom_fonts_label = QLabel()
         self.font_size = QSpinBox()
+        self.text_outline_width = QSpinBox()
         self.padding = QSpinBox()
 
         self.build_ui()
         self.sync_panel_from_draft()
         self.start_capture()
         self.set_status(self.initial_status())
+        logger.info("Main window initialized")
 
     def build_ui(self) -> None:
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -117,14 +133,20 @@ class MainWindow(QMainWindow):
         hint.setStyleSheet("color: #555;")
         preview_layout.addWidget(hint)
 
+        side_scroll = QScrollArea()
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setMinimumWidth(360)
         side = QWidget()
-        side.setMinimumWidth(330)
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(12, 12, 12, 12)
         settings_title = QLabel("Настройки")
         settings_title.setStyleSheet("font-size: 16px; font-weight: 700;")
         side_layout.addWidget(settings_title)
-        side_layout.addWidget(QLabel(f"Экран: X={self.screen.x}, Y={self.screen.y}, {self.screen.width}x{self.screen.height}"))
+        screen_label = QLabel(
+            f"Экран: X={self.screen.x}, Y={self.screen.y}, "
+            f"{self.screen.width}x{self.screen.height}"
+        )
+        side_layout.addWidget(screen_label)
         side_layout.addWidget(self.build_area_group())
         side_layout.addWidget(self.build_style_group())
         side_layout.addWidget(self.build_overlay_group())
@@ -141,7 +163,9 @@ class MainWindow(QMainWindow):
         side_layout.addStretch(1)
 
         splitter.addWidget(preview_panel)
-        splitter.addWidget(side)
+        side_scroll.setWidget(side)
+
+        splitter.addWidget(side_scroll)
         splitter.setStretchFactor(0, 1)
 
     def build_area_group(self) -> QGroupBox:
@@ -173,20 +197,34 @@ class MainWindow(QMainWindow):
         style_form = QFormLayout(style_box)
         self.bg_button.clicked.connect(lambda: self.choose_color("bg_color"))
         self.text_button.clicked.connect(lambda: self.choose_color("text_color"))
+        self.text_outline_button.clicked.connect(
+            lambda: self.choose_color("text_outline_color")
+        )
         self.border_button.clicked.connect(lambda: self.choose_color("border_color"))
         self.marker_button.clicked.connect(lambda: self.choose_color("marker_color"))
         style_form.addRow("Фон", self.bg_button)
         style_form.addRow("Текст", self.text_button)
+        style_form.addRow("Обводка текста", self.text_outline_button)
         style_form.addRow("Рамка", self.border_button)
         style_form.addRow("Метка", self.marker_button)
         self.alpha_slider.setRange(15, 100)
         self.alpha_slider.valueChanged.connect(self.update_draft_from_panel)
         style_form.addRow("Прозрачность", self.alpha_slider)
         self.font_combo.currentFontChanged.connect(self.update_draft_from_panel)
-        style_form.addRow("Шрифт", self.font_combo)
+        self.add_font_button.clicked.connect(self.add_custom_font)
+        font_row = QHBoxLayout()
+        font_row.addWidget(self.font_combo, 1)
+        font_row.addWidget(self.add_font_button)
+        style_form.addRow("Шрифт", font_row)
+        self.custom_fonts_label.setWordWrap(True)
+        self.custom_fonts_label.setStyleSheet("color: #555;")
+        style_form.addRow("", self.custom_fonts_label)
         self.font_size.setRange(8, 72)
         self.font_size.valueChanged.connect(self.update_draft_from_panel)
         style_form.addRow("Размер", self.font_size)
+        self.text_outline_width.setRange(0, 8)
+        self.text_outline_width.valueChanged.connect(self.update_draft_from_panel)
+        style_form.addRow("Толщина обводки", self.text_outline_width)
         self.padding.setRange(2, 48)
         self.padding.valueChanged.connect(self.update_draft_from_panel)
         style_form.addRow("Отступ", self.padding)
@@ -205,7 +243,10 @@ class MainWindow(QMainWindow):
         buttons.addWidget(self.scan_button)
         buttons.addWidget(self.clear_overlay_button)
         overlay_layout.addLayout(buttons)
-        hint = QLabel("OCR берет сохраненную красную область. Edit mode нужен для движения и скрытия окон.")
+        hint = QLabel(
+            "OCR берет сохраненную красную область. "
+            "Edit mode нужен для движения и скрытия окон."
+        )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #555;")
         overlay_layout.addWidget(hint)
@@ -213,17 +254,23 @@ class MainWindow(QMainWindow):
 
     def initial_status(self) -> str:
         renderer = "QOpenGLWidget" if OPENGL_WIDGET_AVAILABLE else "QWidget fallback"
-        return f"Настройки загружены автоматически. Backend: mss {mss.__version__}. Renderer: {renderer}."
+        return (
+            "Настройки загружены автоматически. "
+            f"Backend: mss {mss.__version__}. Renderer: {renderer}. "
+            f"Лог: {LOG_PATH.resolve()}"
+        )
 
     def save_settings(self) -> None:
         self.update_draft_from_panel(mark_dirty=False)
         self.saved_settings = copy.deepcopy(self.draft_settings)
+        self.font_registry.load_paths(self.saved_settings.style.custom_font_paths)
         save_settings(self.saved_settings)
         self.overlay_window.set_style(self.saved_settings.style)
         if self.overlay_window.isVisible():
             self.overlay_window.show_overlay()
         self.dirty = False
         self.set_status(f"Сохранено и применено: {SETTINGS_PATH.resolve()}")
+        logger.info("Settings were saved and applied")
 
     def sync_panel_from_draft(self) -> None:
         self.syncing = True
@@ -237,8 +284,10 @@ class MainWindow(QMainWindow):
             self.alpha_slider.setValue(round(style.alpha * 100))
             self.font_combo.setCurrentFont(QFont(style.font_family))
             self.font_size.setValue(style.font_size)
+            self.text_outline_width.setValue(style.text_outline_width)
             self.padding.setValue(style.padding)
             self.update_color_buttons()
+            self.update_custom_fonts_label()
         finally:
             self.syncing = False
 
@@ -257,12 +306,15 @@ class MainWindow(QMainWindow):
         self.draft_settings.style = OverlayStyle(
             bg_color=style.bg_color,
             text_color=style.text_color,
+            text_outline_color=style.text_outline_color,
+            text_outline_width=self.text_outline_width.value(),
             border_color=style.border_color,
             marker_color=style.marker_color,
             alpha=self.alpha_slider.value() / 100,
             font_family=self.font_combo.currentFont().family(),
             font_size=self.font_size.value(),
             padding=self.padding.value(),
+            custom_font_paths=list(style.custom_font_paths),
         )
         self.preview.set_settings(self.draft_settings)
         self.sync_panel_from_draft()
@@ -274,11 +326,19 @@ class MainWindow(QMainWindow):
         for button, color in (
             (self.bg_button, style.bg_color),
             (self.text_button, style.text_color),
+            (self.text_outline_button, style.text_outline_color),
             (self.border_button, style.border_color),
             (self.marker_button, style.marker_color),
         ):
             button.setText(color)
             button.setStyleSheet(f"background-color: {color};")
+
+    def update_custom_fonts_label(self) -> None:
+        count = len(self.draft_settings.style.custom_font_paths)
+        if count == 0:
+            self.custom_fonts_label.setText("Пользовательские шрифты не добавлены.")
+        else:
+            self.custom_fonts_label.setText(f"Добавлено пользовательских шрифтов: {count}.")
 
     def choose_color(self, field: str) -> None:
         current = QColor(getattr(self.draft_settings.style, field))
@@ -289,12 +349,41 @@ class MainWindow(QMainWindow):
         self.update_color_buttons()
         self.preview.set_settings(self.draft_settings)
         self.mark_dirty()
+        logger.info("Draft color changed: %s=%s", field, color.name())
+
+    def add_custom_font(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Добавить шрифт",
+            "",
+            "Fonts (*.ttf *.otf *.ttc)",
+        )
+        if not path:
+            return
+
+        result = self.font_registry.add_font_file(Path(path))
+        if result is None:
+            self.set_status("Не удалось добавить шрифт. Детали записаны в лог.")
+            return
+
+        style = self.draft_settings.style
+        style.custom_font_paths = unique_font_paths(
+            [*style.custom_font_paths, str(result.path)]
+        )
+        if result.families:
+            style.font_family = result.families[0]
+        self.sync_panel_from_draft()
+        self.preview.set_settings(self.draft_settings)
+        self.mark_dirty()
+        self.set_status("Шрифт добавлен. Он применится к overlay после «Сохранить».")
+        logger.info("Custom font added through UI: %s", result.path)
 
     def on_area_changed_from_preview(self, area: TranslationArea) -> None:
         self.draft_settings.area = self.clamp_area(area)
         self.sync_panel_from_draft()
         self.preview.set_settings(self.draft_settings)
         self.mark_dirty()
+        logger.debug("Draft area changed from preview: %s", self.draft_settings.area)
 
     def set_area_fullscreen(self) -> None:
         self.draft_settings.area = TranslationArea(
@@ -306,12 +395,14 @@ class MainWindow(QMainWindow):
         self.sync_panel_from_draft()
         self.preview.set_settings(self.draft_settings)
         self.mark_dirty()
+        logger.info("Draft area set to fullscreen")
 
     def set_area_centered(self) -> None:
         self.draft_settings.area = AppSettings.default(self.screen).area
         self.sync_panel_from_draft()
         self.preview.set_settings(self.draft_settings)
         self.mark_dirty()
+        logger.info("Draft area centered")
 
     def on_live_toggled(self, enabled: bool) -> None:
         if enabled:
@@ -320,6 +411,7 @@ class MainWindow(QMainWindow):
         else:
             self.stop_capture()
             self.set_status("Live preview на паузе.")
+        logger.info("Live preview toggled: %s", enabled)
 
     def on_fps_changed(self) -> None:
         if self.capture_thread is not None:
@@ -347,7 +439,9 @@ class MainWindow(QMainWindow):
         try:
             frame = grab_screen_qimage(self.screen)
             self.on_frame_captured(frame)
+            logger.info("Manual preview refresh completed")
         except Exception as exc:  # noqa: BLE001 - UI boundary
+            logger.exception("Manual preview refresh failed")
             self.set_status(f"Не удалось обновить кадр: {exc}")
 
     def on_overlay_toggled(self, enabled: bool) -> None:
@@ -360,6 +454,7 @@ class MainWindow(QMainWindow):
         else:
             self.overlay_window.hide()
             self.set_status("Overlay скрыт.")
+        logger.info("Overlay visibility toggled: %s", enabled)
 
     def on_overlay_edit_toggled(self, enabled: bool) -> None:
         if enabled and not self.overlay_checkbox.isChecked():
@@ -384,6 +479,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - UI boundary
             if was_visible:
                 self.overlay_window.show_overlay()
+            logger.exception("OCR scan failed")
             self.set_status(f"OCR не смог захватить область: {exc}")
             return
 
@@ -398,10 +494,12 @@ class MainWindow(QMainWindow):
         self.set_status(
             f"OCR: {result.engine_name}. Найдено окон: {len(result.boxes)}.{dirty_note}{warning}"
         )
+        logger.info("OCR scan completed with %s boxes", len(result.boxes))
 
     def clear_overlay(self) -> None:
         self.overlay_window.clear_boxes()
         self.set_status("Overlay очищен.")
+        logger.info("Overlay cleared")
 
     def on_frame_captured(self, frame: QImage) -> None:
         self.preview.set_frame(self.mask_preview_canvas(frame))
@@ -410,6 +508,7 @@ class MainWindow(QMainWindow):
         if frame.isNull():
             return frame
         image = frame
+        # The preview canvas is masked only inside captured frames to avoid recursion.
         top_left = self.preview.mapToGlobal(QPoint(0, 0))
         ratio_x = image.width() / max(1, self.screen.width)
         ratio_y = image.height() / max(1, self.screen.height)
@@ -435,6 +534,7 @@ class MainWindow(QMainWindow):
         if not self.dirty:
             self.set_status("Есть несохраненные изменения. Они применятся после «Сохранить».")
         self.dirty = True
+        logger.debug("Settings marked dirty")
 
     def set_status(self, message: str) -> None:
         self.status_label.setText(message)
@@ -442,4 +542,5 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         self.stop_capture()
         self.overlay_window.close()
+        logger.info("Main window closed")
         super().closeEvent(event)

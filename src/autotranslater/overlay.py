@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from typing import Any
 
@@ -11,6 +12,10 @@ from .boxes import TranslationBox
 from .constants import APP_NAME
 from .geometry import clamp
 from .models import OverlayStyle, ScreenRect
+from .text_painter import draw_outlined_text
+
+
+logger = logging.getLogger(__name__)
 
 
 class OverlayWindow(QWidget):
@@ -33,9 +38,17 @@ class OverlayWindow(QWidget):
         self.setMouseTracking(True)
         self.setGeometry(screen.x, screen.y, screen.width, screen.height)
         self.set_edit_mode(False)
+        logger.info(
+            "Overlay initialized for screen x=%s y=%s size=%sx%s",
+            screen.x,
+            screen.y,
+            screen.width,
+            screen.height,
+        )
 
     def set_boxes(self, boxes: list[TranslationBox]) -> None:
         self.boxes = boxes
+        logger.info("Overlay boxes updated: %s", len(boxes))
         self.update()
 
     def clear_boxes(self) -> None:
@@ -43,19 +56,32 @@ class OverlayWindow(QWidget):
 
     def set_style(self, style: OverlayStyle) -> None:
         self.style = style
+        logger.debug(
+            "Overlay style updated: font=%s size=%s outline=%s",
+            style.font_family,
+            style.font_size,
+            style.text_outline_width,
+        )
         self.update()
 
     def set_edit_mode(self, enabled: bool) -> None:
         self.edit_mode = enabled
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not enabled)
         self.apply_windows_click_through(not enabled)
+        logger.info("Overlay edit mode set to %s", enabled)
         self.update()
 
     def show_overlay(self) -> None:
-        self.setGeometry(self.screen.x, self.screen.y, self.screen.width, self.screen.height)
+        self.setGeometry(
+            self.screen.x,
+            self.screen.y,
+            self.screen.width,
+            self.screen.height,
+        )
         self.show()
         self.raise_()
         self.apply_windows_click_through(not self.edit_mode)
+        logger.info("Overlay shown")
 
     def paintEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         painter = QPainter(self)
@@ -81,13 +107,22 @@ class OverlayWindow(QWidget):
         painter.drawRect(rect)
 
         padding = max(0, self.style.padding)
-        text_rect = rect.adjusted(padding, padding, -padding, -padding)
-        painter.setPen(QColor(self.style.text_color))
-        painter.setFont(self.fitted_font(box.translated_text, text_rect))
-        painter.drawText(
+        outline_width = max(0, self.style.text_outline_width)
+        text_rect = rect.adjusted(
+            padding + outline_width,
+            padding + outline_width,
+            -padding - outline_width,
+            -padding - outline_width,
+        )
+        draw_outlined_text(
+            painter,
             text_rect,
-            Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
             box.translated_text,
+            self.fitted_font(box.translated_text, text_rect),
+            self.style.text_color,
+            self.style.text_outline_color,
+            outline_width,
+            Qt.TextFlag.TextWordWrap | Qt.AlignmentFlag.AlignCenter,
         )
 
     def draw_marker(self, painter: QPainter, box: TranslationBox) -> None:
@@ -134,6 +169,7 @@ class OverlayWindow(QWidget):
         if box is None:
             return
         box.hidden = not box.hidden
+        logger.info("Overlay box %s hidden=%s", box.id, box.hidden)
         self.update()
         event.accept()
 
@@ -146,8 +182,12 @@ class OverlayWindow(QWidget):
         rect = self.box_rect(box)
         self.drag_state = {
             "box": box,
-            "offset": QPointF(event.position().x() - rect.x(), event.position().y() - rect.y()),
+            "offset": QPointF(
+                event.position().x() - rect.x(),
+                event.position().y() - rect.y(),
+            ),
         }
+        logger.debug("Started dragging overlay box %s", box.id)
         event.accept()
 
     def mouseMoveEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
@@ -174,6 +214,11 @@ class OverlayWindow(QWidget):
 
     def mouseReleaseEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         if event.button() == Qt.MouseButton.LeftButton:
+            if self.drag_state is not None:
+                logger.debug(
+                    "Finished dragging overlay box %s",
+                    self.drag_state["box"].id,
+                )
             self.drag_state = None
 
     def box_at(self, point: QPointF) -> TranslationBox | None:
@@ -199,6 +244,8 @@ class OverlayWindow(QWidget):
             return
         import ctypes
 
+        # Qt handles transparent input on most platforms; Win32 needs the
+        # extended transparent style so clicks reach the manga/browser below.
         hwnd = int(self.winId())
         user32 = ctypes.windll.user32
         gwl_exstyle = -20
@@ -211,4 +258,4 @@ class OverlayWindow(QWidget):
         else:
             style &= ~ws_ex_transparent
         user32.SetWindowLongW(hwnd, gwl_exstyle, style)
-
+        logger.debug("Windows click-through set to %s", enabled)

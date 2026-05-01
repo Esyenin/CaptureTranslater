@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 7,
   "area": {
     "x": 120,
     "y": 80,
@@ -9,11 +9,14 @@
   "style": {
     "bg_color": "#fff7dc",
     "text_color": "#141414",
+    "text_outline_color": "#ffffff",
+    "text_outline_width": 0,
     "border_color": "#111111",
     "marker_color": "#ffcc33",
     "alpha": 0.88,
     "font_family": "Arial",
     "font_size": 18,
-    "padding": 10
+    "padding": 10,
+    "custom_font_paths": []
   }
 }

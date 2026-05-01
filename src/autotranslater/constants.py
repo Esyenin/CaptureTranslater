@@ -4,8 +4,9 @@ from pathlib import Path
 
 
 APP_NAME = "Autotranslater"
-PROJECT_VERSION = 6
+PROJECT_VERSION = 7
 SETTINGS_PATH = Path("autotranslater.settings.json")
+LOG_PATH = Path("logs") / "autotranslater.log"
 
 MIN_AREA_SIZE = 80
 DEFAULT_PREVIEW_FPS = 30
@@ -17,3 +18,4 @@ EDGE_HIT_RADIUS = 8
 MAX_PREVIEW_ZOOM = 6.0
 
 PREVIEW_BACKGROUND = "#151515"
+CUSTOM_FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}

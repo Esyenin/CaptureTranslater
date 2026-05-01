@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .constants import MIN_AREA_SIZE
@@ -35,24 +35,33 @@ class TranslationArea:
 class OverlayStyle:
     bg_color: str = "#fff7dc"
     text_color: str = "#141414"
+    text_outline_color: str = "#ffffff"
+    text_outline_width: int = 0
     border_color: str = "#111111"
     marker_color: str = "#ffcc33"
     alpha: float = 0.88
     font_family: str = "Arial"
     font_size: int = 18
     padding: int = 10
+    custom_font_paths: list[str] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "OverlayStyle":
+        custom_font_paths = data.get("custom_font_paths", [])
+        if not isinstance(custom_font_paths, list):
+            custom_font_paths = []
         return cls(
             bg_color=str(data.get("bg_color", "#fff7dc")),
             text_color=str(data.get("text_color", "#141414")),
+            text_outline_color=str(data.get("text_outline_color", "#ffffff")),
+            text_outline_width=int(data.get("text_outline_width", 0)),
             border_color=str(data.get("border_color", "#111111")),
             marker_color=str(data.get("marker_color", "#ffcc33")),
             alpha=float(data.get("alpha", 0.88)),
             font_family=str(data.get("font_family", "Arial")),
             font_size=int(data.get("font_size", 18)),
             padding=int(data.get("padding", 10)),
+            custom_font_paths=[str(path) for path in custom_font_paths],
         )
 
 
