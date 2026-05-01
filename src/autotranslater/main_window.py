@@ -6,6 +6,7 @@ from typing import Any
 from PySide6.QtCore import QPoint, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QImage, QPainter
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QColorDialog,
     QComboBox,
@@ -38,8 +39,10 @@ from .constants import (
 )
 from .geometry import clamp_area_to_screen
 from .models import AppSettings, OverlayStyle, ScreenRect, TranslationArea
+from .overlay import OverlayWindow
 from .platform import get_virtual_screen_rect
 from .preview import OPENGL_WIDGET_AVAILABLE, PreviewWidget
+from .pipeline import OcrPipeline
 from .settings_store import load_settings, save_settings
 
 
@@ -54,12 +57,18 @@ class MainWindow(QMainWindow):
         self.syncing = False
         self.dirty = False
         self.capture_thread: CaptureThread | None = None
+        self.overlay_window = OverlayWindow(self.screen, self.saved_settings.style)
+        self.ocr_pipeline = OcrPipeline(self.screen)
 
         self.preview = PreviewWidget(self.screen, self.draft_settings)
         self.preview.area_changed.connect(self.on_area_changed_from_preview)
         self.status_label = QLabel()
         self.live_checkbox = QCheckBox("Live")
         self.live_checkbox.setChecked(True)
+        self.overlay_checkbox = QCheckBox("Показать overlay")
+        self.overlay_edit_checkbox = QCheckBox("Редактировать окна overlay")
+        self.scan_button = QPushButton("Сканировать область")
+        self.clear_overlay_button = QPushButton("Очистить overlay")
         self.fps_combo = QComboBox()
         self.area_x = QSpinBox()
         self.area_y = QSpinBox()
@@ -118,6 +127,7 @@ class MainWindow(QMainWindow):
         side_layout.addWidget(QLabel(f"Экран: X={self.screen.x}, Y={self.screen.y}, {self.screen.width}x{self.screen.height}"))
         side_layout.addWidget(self.build_area_group())
         side_layout.addWidget(self.build_style_group())
+        side_layout.addWidget(self.build_overlay_group())
 
         save_button = QPushButton("Сохранить")
         save_button.clicked.connect(self.save_settings)
@@ -182,6 +192,25 @@ class MainWindow(QMainWindow):
         style_form.addRow("Отступ", self.padding)
         return style_box
 
+    def build_overlay_group(self) -> QGroupBox:
+        overlay_box = QGroupBox("Overlay и OCR")
+        overlay_layout = QVBoxLayout(overlay_box)
+        self.overlay_checkbox.toggled.connect(self.on_overlay_toggled)
+        self.overlay_edit_checkbox.toggled.connect(self.on_overlay_edit_toggled)
+        self.scan_button.clicked.connect(self.scan_area)
+        self.clear_overlay_button.clicked.connect(self.clear_overlay)
+        overlay_layout.addWidget(self.overlay_checkbox)
+        overlay_layout.addWidget(self.overlay_edit_checkbox)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.scan_button)
+        buttons.addWidget(self.clear_overlay_button)
+        overlay_layout.addLayout(buttons)
+        hint = QLabel("OCR берет сохраненную красную область. Edit mode нужен для движения и скрытия окон.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #555;")
+        overlay_layout.addWidget(hint)
+        return overlay_box
+
     def initial_status(self) -> str:
         renderer = "QOpenGLWidget" if OPENGL_WIDGET_AVAILABLE else "QWidget fallback"
         return f"Настройки загружены автоматически. Backend: mss {mss.__version__}. Renderer: {renderer}."
@@ -190,6 +219,9 @@ class MainWindow(QMainWindow):
         self.update_draft_from_panel(mark_dirty=False)
         self.saved_settings = copy.deepcopy(self.draft_settings)
         save_settings(self.saved_settings)
+        self.overlay_window.set_style(self.saved_settings.style)
+        if self.overlay_window.isVisible():
+            self.overlay_window.show_overlay()
         self.dirty = False
         self.set_status(f"Сохранено и применено: {SETTINGS_PATH.resolve()}")
 
@@ -318,6 +350,59 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - UI boundary
             self.set_status(f"Не удалось обновить кадр: {exc}")
 
+    def on_overlay_toggled(self, enabled: bool) -> None:
+        self.overlay_window.set_style(self.saved_settings.style)
+        self.overlay_window.set_edit_mode(self.overlay_edit_checkbox.isChecked())
+        if enabled:
+            self.overlay_window.show_overlay()
+            mode = "edit" if self.overlay_edit_checkbox.isChecked() else "click-through"
+            self.set_status(f"Overlay включен ({mode}).")
+        else:
+            self.overlay_window.hide()
+            self.set_status("Overlay скрыт.")
+
+    def on_overlay_edit_toggled(self, enabled: bool) -> None:
+        if enabled and not self.overlay_checkbox.isChecked():
+            self.overlay_checkbox.setChecked(True)
+        self.overlay_window.set_edit_mode(enabled)
+        if self.overlay_window.isVisible():
+            self.overlay_window.show_overlay()
+        self.set_status(
+            "Overlay edit включен: окна можно двигать и скрывать двойным кликом."
+            if enabled
+            else "Overlay edit выключен: окно снова пропускает клики к приложениям."
+        )
+
+    def scan_area(self) -> None:
+        settings = self.saved_settings
+        was_visible = self.overlay_window.isVisible()
+        if was_visible:
+            self.overlay_window.hide()
+            QApplication.processEvents()
+        try:
+            result = self.ocr_pipeline.scan_area(settings.area, settings.style)
+        except Exception as exc:  # noqa: BLE001 - UI boundary
+            if was_visible:
+                self.overlay_window.show_overlay()
+            self.set_status(f"OCR не смог захватить область: {exc}")
+            return
+
+        self.overlay_window.set_style(settings.style)
+        self.overlay_window.set_boxes(result.boxes)
+        if not self.overlay_checkbox.isChecked():
+            self.overlay_checkbox.setChecked(True)
+        self.overlay_window.show_overlay()
+
+        dirty_note = " Несохраненные изменения пока не применены." if self.dirty else ""
+        warning = f" {result.warning}" if result.warning else ""
+        self.set_status(
+            f"OCR: {result.engine_name}. Найдено окон: {len(result.boxes)}.{dirty_note}{warning}"
+        )
+
+    def clear_overlay(self) -> None:
+        self.overlay_window.clear_boxes()
+        self.set_status("Overlay очищен.")
+
     def on_frame_captured(self, frame: QImage) -> None:
         self.preview.set_frame(self.mask_preview_canvas(frame))
 
@@ -356,4 +441,5 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         self.stop_capture()
+        self.overlay_window.close()
         super().closeEvent(event)

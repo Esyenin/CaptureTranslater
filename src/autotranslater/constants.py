@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 APP_NAME = "Autotranslater"
-PROJECT_VERSION = 5
+PROJECT_VERSION = 6
 SETTINGS_PATH = Path("autotranslater.settings.json")
 
 MIN_AREA_SIZE = 80
