@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+env/
+
+.idea/
+.vscode/
+
+autotranslater.settings.json
+
+dist/
+build/
+*.egg-info/

@@ -1,0 +1,19 @@
+{
+  "version": 5,
+  "area": {
+    "x": 120,
+    "y": 80,
+    "width": 920,
+    "height": 1180
+  },
+  "style": {
+    "bg_color": "#fff7dc",
+    "text_color": "#141414",
+    "border_color": "#111111",
+    "marker_color": "#ffcc33",
+    "alpha": 0.88,
+    "font_family": "Arial",
+    "font_size": 18,
+    "padding": 10
+  }
+}
