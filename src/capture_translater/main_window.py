@@ -236,11 +236,11 @@ class MainWindow(QMainWindow):
     def build_overlay_group(self) -> QGroupBox:
         overlay_box = QGroupBox("Overlay и OCR")
         overlay_layout = QVBoxLayout(overlay_box)
+        for preset in OCR_PRESETS:
+            self.ocr_preset_combo.addItem(preset.label, preset.id)
         self.ocr_preset_combo.currentIndexChanged.connect(
             lambda _index: self.update_draft_from_panel()
         )
-        for preset in OCR_PRESETS:
-            self.ocr_preset_combo.addItem(preset.label, preset.id)
         self.ocr_preset_description.setWordWrap(True)
         self.ocr_preset_description.setStyleSheet("color: #555;")
         self.overlay_checkbox.toggled.connect(self.on_overlay_toggled)
@@ -519,8 +519,11 @@ class MainWindow(QMainWindow):
 
         dirty_note = " Несохраненные изменения пока не применены." if self.dirty else ""
         warning = f" {result.warning}" if result.warning else ""
+        result_label = "Диагностика" if result.diagnostic else f"Найдено окон: {len(result.boxes)}"
         self.set_status(
-            f"OCR: {result.engine_name}. Найдено окон: {len(result.boxes)}.{dirty_note}{warning}"
+            "OCR: "
+            f"{result.engine_name}. Перевод: {result.translation_engine_name}. "
+            f"{result_label}.{dirty_note}{warning}"
         )
         logger.info("OCR scan completed with %s boxes", len(result.boxes))
 

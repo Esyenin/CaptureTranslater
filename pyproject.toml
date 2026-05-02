@@ -16,6 +16,9 @@ ocr = [
 paddle = [
     "paddleocr[all]>=3.0",
 ]
+translate = [
+    "deep-translator>=1.11",
+]
 
 [project.scripts]
 capture-translater = "capture_translater.app:main"

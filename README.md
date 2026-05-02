@@ -51,7 +51,13 @@ py -3.13 -m pip install pillow pytesseract
 ```
 
 Сам бинарник Tesseract OCR тоже должен быть установлен в системе и доступен из `PATH`. Сейчас результат OCR
-показывается как текст окна без машинного перевода; следующий слой проекта - переводчик между OCR и overlay.
+проходит через переводчик, если установлен `deep-translator`:
+
+```powershell
+py -3.13 -m pip install deep-translator
+```
+
+Если переводчик не установлен или не сработал, overlay покажет исходный OCR-текст и запишет причину в лог.
 
 ## Структура
 
@@ -63,6 +69,7 @@ py -3.13 -m pip install pillow pytesseract
 - `overlay.py` - прозрачное topmost-окно поверх рабочего стола;
 - `ocr.py` - интерфейс OCR и текущие движки;
 - `ocr_presets.py` - список OCR-пресетов и их параметры;
+- `translation.py` - перевод OCR-текста на русский;
 - `pipeline.py` - связка `захват области -> OCR -> overlay boxes`;
 - `font_manager.py` - загрузка пользовательских шрифтов;
 - `text_painter.py` - единое рисование текста с обводкой;
