@@ -36,7 +36,6 @@ from .constants import (
     APP_NAME,
     DEFAULT_PREVIEW_FPS,
     FPS_CHOICES,
-    LOG_PATH,
     MAX_PREVIEW_FPS,
     MIN_AREA_SIZE,
     PREVIEW_BACKGROUND,
@@ -44,6 +43,7 @@ from .constants import (
 )
 from .font_manager import FontRegistry, unique_font_paths
 from .geometry import clamp_area_to_screen
+from .logging_config import get_current_log_path
 from .models import AppSettings, OverlayStyle, ScreenRect, TranslationArea
 from .overlay import OverlayWindow
 from .platform import get_virtual_screen_rect
@@ -257,7 +257,7 @@ class MainWindow(QMainWindow):
         return (
             "Настройки загружены автоматически. "
             f"Backend: mss {mss.__version__}. Renderer: {renderer}. "
-            f"Лог: {LOG_PATH.resolve()}"
+            f"Лог: {get_current_log_path().resolve()}"
         )
 
     def save_settings(self) -> None:

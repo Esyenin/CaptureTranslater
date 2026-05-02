@@ -6,7 +6,8 @@ from pathlib import Path
 APP_NAME = "Autotranslater"
 PROJECT_VERSION = 7
 SETTINGS_PATH = Path("autotranslater.settings.json")
-LOG_PATH = Path("logs") / "autotranslater.log"
+LOG_DIR = Path("logs")
+LOG_FILE_PREFIX = "autotranslater"
 
 MIN_AREA_SIZE = 80
 DEFAULT_PREVIEW_FPS = 30
