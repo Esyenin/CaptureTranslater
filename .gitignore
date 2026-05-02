@@ -1,4 +1,4 @@
-__pycache__/
+﻿__pycache__/
 *.py[cod]
 
 .venv/
@@ -8,7 +8,7 @@ env/
 .idea/
 .vscode/
 
-autotranslater.settings.json
+capture_translater.settings.json
 logs/
 
 dist/

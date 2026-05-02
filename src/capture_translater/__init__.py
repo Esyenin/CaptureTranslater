@@ -1,4 +1,4 @@
-"""Autotranslater prototype package."""
+﻿"""CaptureTranslater prototype package."""
 
 __all__ = ["__version__"]
 

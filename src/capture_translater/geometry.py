@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from .constants import MIN_AREA_SIZE
 from .models import ScreenRect, TranslationArea

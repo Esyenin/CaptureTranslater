@@ -1,13 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 
 
-APP_NAME = "Autotranslater"
+APP_NAME = "CaptureTranslater"
 PROJECT_VERSION = 7
-SETTINGS_PATH = Path("autotranslater.settings.json")
+SETTINGS_PATH = Path("capture_translater.settings.json")
 LOG_DIR = Path("logs")
-LOG_FILE_PREFIX = "autotranslater"
+LOG_FILE_PREFIX = "capture_translater"
 
 MIN_AREA_SIZE = 80
 DEFAULT_PREVIEW_FPS = 30
