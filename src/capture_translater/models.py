@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .constants import MIN_AREA_SIZE
+from .ocr_presets import DEFAULT_OCR_PRESET_ID, OCR_PRESET_BY_ID
 
 
 @dataclass
@@ -66,9 +67,22 @@ class OverlayStyle:
 
 
 @dataclass
+class OcrSettings:
+    preset_id: str = DEFAULT_OCR_PRESET_ID
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "OcrSettings":
+        preset_id = str(data.get("preset_id", DEFAULT_OCR_PRESET_ID))
+        if preset_id not in OCR_PRESET_BY_ID:
+            preset_id = DEFAULT_OCR_PRESET_ID
+        return cls(preset_id=preset_id)
+
+
+@dataclass
 class AppSettings:
     area: TranslationArea
     style: OverlayStyle
+    ocr: OcrSettings
 
     @classmethod
     def default(cls, screen: ScreenRect) -> "AppSettings":
@@ -82,6 +96,7 @@ class AppSettings:
                 height=height,
             ),
             style=OverlayStyle(),
+            ocr=OcrSettings(),
         )
 
     @classmethod
@@ -90,4 +105,5 @@ class AppSettings:
         return cls(
             area=TranslationArea.from_json(data.get("area", asdict(defaults.area))),
             style=OverlayStyle.from_json(data.get("style", asdict(defaults.style))),
+            ocr=OcrSettings.from_json(data.get("ocr", asdict(defaults.ocr))),
         )

@@ -13,6 +13,9 @@ ocr = [
     "pillow>=10.0",
     "pytesseract>=0.3",
 ]
+paddle = [
+    "paddleocr[all]>=3.0",
+]
 
 [project.scripts]
 capture-translater = "capture_translater.app:main"

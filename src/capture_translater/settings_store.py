@@ -30,6 +30,7 @@ def save_settings(settings: AppSettings) -> None:
         "version": PROJECT_VERSION,
         "area": asdict(settings.area),
         "style": asdict(settings.style),
+        "ocr": asdict(settings.ocr),
     }
     SETTINGS_PATH.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),

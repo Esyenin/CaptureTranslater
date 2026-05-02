@@ -44,7 +44,8 @@ from .constants import (
 from .font_manager import FontRegistry, unique_font_paths
 from .geometry import clamp_area_to_screen
 from .logging_config import get_current_log_path
-from .models import AppSettings, OverlayStyle, ScreenRect, TranslationArea
+from .models import AppSettings, OcrSettings, OverlayStyle, ScreenRect, TranslationArea
+from .ocr_presets import OCR_PRESETS, get_ocr_preset
 from .overlay import OverlayWindow
 from .platform import get_virtual_screen_rect
 from .preview import OPENGL_WIDGET_AVAILABLE, PreviewWidget
@@ -69,7 +70,7 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.capture_thread: CaptureThread | None = None
         self.overlay_window = OverlayWindow(self.screen, self.saved_settings.style)
-        self.ocr_pipeline = OcrPipeline(self.screen)
+        self.ocr_pipeline = OcrPipeline(self.screen, self.saved_settings.ocr.preset_id)
 
         self.preview = PreviewWidget(self.screen, self.draft_settings)
         self.preview.area_changed.connect(self.on_area_changed_from_preview)
@@ -80,6 +81,8 @@ class MainWindow(QMainWindow):
         self.overlay_edit_checkbox = QCheckBox("Редактировать окна overlay")
         self.scan_button = QPushButton("Сканировать область")
         self.clear_overlay_button = QPushButton("Очистить overlay")
+        self.ocr_preset_combo = QComboBox()
+        self.ocr_preset_description = QLabel()
         self.fps_combo = QComboBox()
         self.area_x = QSpinBox()
         self.area_y = QSpinBox()
@@ -233,10 +236,20 @@ class MainWindow(QMainWindow):
     def build_overlay_group(self) -> QGroupBox:
         overlay_box = QGroupBox("Overlay и OCR")
         overlay_layout = QVBoxLayout(overlay_box)
+        self.ocr_preset_combo.currentIndexChanged.connect(
+            lambda _index: self.update_draft_from_panel()
+        )
+        for preset in OCR_PRESETS:
+            self.ocr_preset_combo.addItem(preset.label, preset.id)
+        self.ocr_preset_description.setWordWrap(True)
+        self.ocr_preset_description.setStyleSheet("color: #555;")
         self.overlay_checkbox.toggled.connect(self.on_overlay_toggled)
         self.overlay_edit_checkbox.toggled.connect(self.on_overlay_edit_toggled)
         self.scan_button.clicked.connect(self.scan_area)
         self.clear_overlay_button.clicked.connect(self.clear_overlay)
+        overlay_layout.addWidget(QLabel("OCR пресет"))
+        overlay_layout.addWidget(self.ocr_preset_combo)
+        overlay_layout.addWidget(self.ocr_preset_description)
         overlay_layout.addWidget(self.overlay_checkbox)
         overlay_layout.addWidget(self.overlay_edit_checkbox)
         buttons = QHBoxLayout()
@@ -264,6 +277,7 @@ class MainWindow(QMainWindow):
         self.update_draft_from_panel(mark_dirty=False)
         self.saved_settings = copy.deepcopy(self.draft_settings)
         self.font_registry.load_paths(self.saved_settings.style.custom_font_paths)
+        self.ocr_pipeline.set_preset(self.saved_settings.ocr.preset_id)
         save_settings(self.saved_settings)
         self.overlay_window.set_style(self.saved_settings.style)
         if self.overlay_window.isVisible():
@@ -286,8 +300,10 @@ class MainWindow(QMainWindow):
             self.font_size.setValue(style.font_size)
             self.text_outline_width.setValue(style.text_outline_width)
             self.padding.setValue(style.padding)
+            self.set_combo_data(self.ocr_preset_combo, self.draft_settings.ocr.preset_id)
             self.update_color_buttons()
             self.update_custom_fonts_label()
+            self.update_ocr_preset_description()
         finally:
             self.syncing = False
 
@@ -316,6 +332,9 @@ class MainWindow(QMainWindow):
             padding=self.padding.value(),
             custom_font_paths=list(style.custom_font_paths),
         )
+        self.draft_settings.ocr = OcrSettings(
+            preset_id=str(self.ocr_preset_combo.currentData())
+        )
         self.preview.set_settings(self.draft_settings)
         self.sync_panel_from_draft()
         if mark_dirty:
@@ -339,6 +358,15 @@ class MainWindow(QMainWindow):
             self.custom_fonts_label.setText("Пользовательские шрифты не добавлены.")
         else:
             self.custom_fonts_label.setText(f"Добавлено пользовательских шрифтов: {count}.")
+
+    def update_ocr_preset_description(self) -> None:
+        preset = get_ocr_preset(self.draft_settings.ocr.preset_id)
+        self.ocr_preset_description.setText(preset.description)
+
+    def set_combo_data(self, combo: QComboBox, value: str) -> None:
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)
 
     def choose_color(self, field: str) -> None:
         current = QColor(getattr(self.draft_settings.style, field))

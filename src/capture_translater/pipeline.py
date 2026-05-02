@@ -7,7 +7,7 @@ from .boxes import TranslationBox
 from .capture import grab_screen_qimage
 from .geometry import clamp
 from .models import OverlayStyle, ScreenRect, TranslationArea
-from .ocr import DummyOcrEngine, OcrEngine, create_ocr_engine
+from .ocr import DummyOcrEngine, OcrEngine, OcrEngineUnavailable, create_ocr_engine
 
 
 logger = logging.getLogger(__name__)
@@ -21,10 +21,23 @@ class PipelineResult:
 
 
 class OcrPipeline:
-    def __init__(self, screen: ScreenRect, engine: OcrEngine | None = None) -> None:
+    def __init__(
+        self,
+        screen: ScreenRect,
+        preset_id: str | None = None,
+        engine: OcrEngine | None = None,
+    ) -> None:
         self.screen = screen
-        self.engine = engine or create_ocr_engine()
+        self.preset_id = preset_id
+        self.engine = engine or create_ocr_engine(preset_id)
         logger.info("OCR pipeline initialized with engine=%s", self.engine.name)
+
+    def set_preset(self, preset_id: str) -> None:
+        if preset_id == self.preset_id:
+            return
+        self.preset_id = preset_id
+        self.engine = create_ocr_engine(preset_id)
+        logger.info("OCR pipeline preset changed to %s", preset_id)
 
     def scan_area(self, area: TranslationArea, style: OverlayStyle) -> PipelineResult:
         logger.info(
@@ -41,6 +54,12 @@ class OcrPipeline:
         engine_name = self.engine.name
         try:
             detections = self.engine.recognize(image)
+        except OcrEngineUnavailable as exc:
+            logger.warning("OCR engine is unavailable: %s", exc)
+            fallback = DummyOcrEngine()
+            detections = fallback.recognize(image)
+            engine_name = fallback.name
+            warning = f"{exc} Показан fallback."
         except Exception as exc:  # noqa: BLE001 - optional OCR engines fail in many local setups
             logger.exception("Primary OCR engine failed; switching to fallback")
             fallback = DummyOcrEngine()
