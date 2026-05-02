@@ -44,6 +44,9 @@ py -3.13 -m pip install paddlepaddle -i https://www.paddlepaddle.org.cn/packages
 py -3.13 -m pip install "paddleocr[all]"
 ```
 
+На Windows адаптер запускает PaddleOCR через `paddle_dynamic` CPU engine. Это обходит известное падение
+static/oneDNN inference на некоторых связках PaddlePaddle 3.x.
+
 Если в окружении есть `pytesseract` и `Pillow`, можно выбрать пресет `Tesseract: простой текст`:
 
 ```powershell

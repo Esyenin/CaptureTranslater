@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from math import floor
 from typing import Protocol
@@ -216,6 +217,8 @@ class PaddleOcrEngine:
         if self.model is not None:
             return self.model
 
+        configure_paddle_runtime()
+
         from paddleocr import PaddleOCR
 
         candidates = self.constructor_candidates()
@@ -247,7 +250,12 @@ class PaddleOcrEngine:
         if self.preset.language:
             old_api_kwargs["lang"] = self.preset.language
 
-        return [new_api_kwargs, old_api_kwargs, {}]
+        dynamic_kwargs = {
+            **new_api_kwargs,
+            "engine": "paddle_dynamic",
+            "engine_config": {"device_type": "cpu"},
+        }
+        return [dynamic_kwargs, new_api_kwargs, old_api_kwargs, {}]
 
     def preprocess_image(self, image: QImage) -> tuple[QImage, float]:
         scale = max(1.0, self.preset.upscale_factor)
@@ -323,6 +331,14 @@ def create_ocr_engine(preset_id: str | None = None) -> OcrEngine:
         return PytesseractOcrEngine()
     logger.info("Selected OCR engine: fallback")
     return DummyOcrEngine()
+
+
+def configure_paddle_runtime() -> None:
+    # The default static oneDNN path currently fails on some Windows/Paddle 3.x
+    # setups with ConvertPirAttribute2RuntimeAttribute. Prefer dynamic CPU.
+    os.environ.setdefault("FLAGS_use_mkldnn", "0")
+    os.environ.setdefault("FLAGS_use_onednn", "0")
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 
 def qimage_to_rgb_array(image: QImage) -> object:

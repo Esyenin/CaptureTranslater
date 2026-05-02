@@ -41,6 +41,7 @@ def configure_logging() -> Path:
 
     root.addHandler(file_handler)
     root.addHandler(console_handler)
+    quiet_noisy_dependencies()
     configure_logging._configured = True
     logging.getLogger(__name__).info("Logging configured: %s", log_path.resolve())
     return log_path
@@ -53,6 +54,11 @@ def build_log_path() -> Path:
 
 def get_current_log_path() -> Path:
     return configure_logging._current_log_path or build_log_path()
+
+
+def quiet_noisy_dependencies() -> None:
+    for logger_name in ("urllib3", "httpcore", "httpx"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 configure_logging._configured = False
