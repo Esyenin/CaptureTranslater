@@ -644,24 +644,46 @@ class MainWindow(QMainWindow):
         if frame.isNull():
             return frame
         image = frame
-        # The preview canvas is masked only inside captured frames to avoid recursion.
-        top_left = self.preview.mapToGlobal(QPoint(0, 0))
+        # Mask the app only inside the preview frame. Real desktop screenshots
+        # still see CaptureTranslater, but the live preview does not recurse.
+        painter = QPainter(image)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(PREVIEW_BACKGROUND))
+        for widget in QApplication.topLevelWidgets():
+            if self.should_mask_widget(widget):
+                self.fill_widget_mask(painter, image, widget)
+        painter.end()
+        return image
+
+    def should_mask_widget(self, widget: QWidget) -> bool:
+        if not widget.isVisible():
+            return False
+        if widget is self:
+            return True
+        if self.isAncestorOf(widget):
+            return True
+        return APP_NAME in widget.windowTitle()
+
+    def fill_widget_mask(
+        self,
+        painter: QPainter,
+        image: QImage,
+        widget: QWidget,
+    ) -> None:
+        top_left = widget.mapToGlobal(QPoint(0, 0))
         ratio_x = image.width() / max(1, self.screen.width)
         ratio_y = image.height() / max(1, self.screen.height)
         left = round((top_left.x() - self.screen.x) * ratio_x)
         top = round((top_left.y() - self.screen.y) * ratio_y)
-        width = round(self.preview.width() * ratio_x)
-        height = round(self.preview.height() * ratio_y)
+        width = round(widget.width() * ratio_x)
+        height = round(widget.height() * ratio_y)
         rect = QRectF(
             max(0, left),
             max(0, top),
             min(width, image.width() - max(0, left)),
             min(height, image.height() - max(0, top)),
         )
-        painter = QPainter(image)
         painter.fillRect(rect, QColor(PREVIEW_BACKGROUND))
-        painter.end()
-        return image
 
     def clamp_area(self, area: TranslationArea) -> TranslationArea:
         return clamp_area_to_screen(area, self.screen)

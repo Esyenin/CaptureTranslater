@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from PySide6.QtGui import QFontDatabase
@@ -80,13 +81,14 @@ def unique_font_paths(paths: list[str]) -> list[str]:
     return unique
 
 
+@lru_cache(maxsize=128)
 def readable_font_family(family: str) -> str:
     """Avoid icon-only system fonts that make translated text look invisible."""
     normalized = family.casefold()
     if not normalized:
         return DEFAULT_READABLE_FONT
     if any(keyword in normalized for keyword in TEXT_UNFRIENDLY_FONT_KEYWORDS):
-        logger.warning(
+        logger.info(
             "Font %s is icon/symbol-oriented; using %s",
             family,
             DEFAULT_READABLE_FONT,
