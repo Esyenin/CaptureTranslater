@@ -2,6 +2,7 @@
 
 import copy
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,8 @@ class MainWindow(QMainWindow):
         self.scan_worker: ScanWorker | None = None
         self.scan_restore_overlay = False
         self.scan_restart_live = False
+        self.scan_sequence = 0
+        self.active_scan_id = ""
         self.overlay_window = OverlayWindow(self.screen, self.saved_settings.style)
         self.ocr_pipeline = OcrPipeline(self.screen, self.saved_settings.ocr.preset_id)
 
@@ -523,20 +526,49 @@ class MainWindow(QMainWindow):
             self.set_status("OCR уже сканирует область. Дождись завершения.")
             return
 
+        total_started = time.perf_counter()
+        self.scan_sequence += 1
+        scan_id = f"scan-{self.scan_sequence}"
+        self.active_scan_id = scan_id
         settings = copy.deepcopy(self.saved_settings)
         self.scan_restore_overlay = self.overlay_window.isVisible()
+        logger.info(
+            "[%s] OCR scan requested area=%s,%s %sx%s preset=%s overlay_visible=%s "
+            "live_running=%s dirty=%s",
+            scan_id,
+            settings.area.x,
+            settings.area.y,
+            settings.area.width,
+            settings.area.height,
+            settings.ocr.preset_id,
+            self.scan_restore_overlay,
+            self.capture_thread is not None,
+            self.dirty,
+        )
         if self.scan_restore_overlay:
+            hide_started = time.perf_counter()
             self.overlay_window.hide()
             QApplication.processEvents()
+            logger.info(
+                "[%s] Existing overlay hidden before clean capture in %.3fs",
+                scan_id,
+                time.perf_counter() - hide_started,
+            )
 
         self.set_scan_busy(True)
         self.scan_restart_live = self.capture_thread is not None
         if self.scan_restart_live:
+            stop_started = time.perf_counter()
             self.stop_capture()
+            logger.info(
+                "[%s] Live preview stopped before OCR capture in %.3fs",
+                scan_id,
+                time.perf_counter() - stop_started,
+            )
 
         self.set_status("Готовлю чистый снимок области для OCR...")
         try:
-            scan_image = self.capture_clean_scan_image(settings.area)
+            scan_image = self.capture_clean_scan_image(settings.area, scan_id)
         except Exception as exc:  # noqa: BLE001 - UI boundary
             if self.scan_restore_overlay:
                 self.overlay_window.show_overlay()
@@ -545,10 +577,15 @@ class MainWindow(QMainWindow):
             self.set_scan_busy(False)
             self.scan_restore_overlay = False
             self.scan_restart_live = False
-            logger.exception("Clean OCR capture failed")
+            logger.exception("[%s] Clean OCR capture failed", scan_id)
             self.set_status(f"OCR не смог захватить область: {exc}")
             return
 
+        logger.info(
+            "[%s] Clean OCR image ready in %.3fs",
+            scan_id,
+            time.perf_counter() - total_started,
+        )
         self.set_status("OCR сканирует сохраненную область...")
         self.scan_thread = QThread(self)
         self.scan_worker = ScanWorker(
@@ -556,6 +593,7 @@ class MainWindow(QMainWindow):
             settings.area,
             settings.style,
             scan_image,
+            scan_id,
         )
         self.scan_worker.moveToThread(self.scan_thread)
         self.scan_thread.started.connect(self.scan_worker.run)
@@ -568,34 +606,50 @@ class MainWindow(QMainWindow):
         self.scan_thread.finished.connect(self.on_scan_thread_finished)
         self.scan_thread.finished.connect(self.scan_thread.deleteLater)
         self.scan_thread.start()
-        logger.info("OCR scan queued in worker thread")
+        logger.info("[%s] OCR scan queued in worker thread", scan_id)
 
-    def capture_clean_scan_image(self, area: TranslationArea) -> QImage:
+    def capture_clean_scan_image(self, area: TranslationArea, scan_id: str) -> QImage:
+        started = time.perf_counter()
         was_visible = self.isVisible()
         previous_state = self.windowState()
         if was_visible:
+            hide_started = time.perf_counter()
             self.hide()
             QApplication.processEvents()
             QThread.msleep(120)
             QApplication.processEvents()
+            logger.info(
+                "[%s] Main window hidden and settled for clean capture in %.3fs",
+                scan_id,
+                time.perf_counter() - hide_started,
+            )
 
         try:
             image = grab_screen_qimage(
-                ScreenRect(area.x, area.y, area.width, area.height)
+                ScreenRect(area.x, area.y, area.width, area.height),
+                diagnostic_label=scan_id,
             )
             logger.info(
-                "Clean OCR image captured for area x=%s y=%s size=%sx%s",
+                "[%s] Clean OCR image captured for area x=%s y=%s size=%sx%s in %.3fs",
+                scan_id,
                 area.x,
                 area.y,
                 area.width,
                 area.height,
+                time.perf_counter() - started,
             )
             return image
         finally:
             if was_visible:
+                restore_started = time.perf_counter()
                 self.setWindowState(previous_state)
                 self.show()
                 self.raise_()
+                logger.info(
+                    "[%s] Main window restored after clean capture in %.3fs",
+                    scan_id,
+                    time.perf_counter() - restore_started,
+                )
 
     def on_scan_finished(self, result: PipelineResult) -> None:
         settings = self.saved_settings
@@ -621,13 +675,17 @@ class MainWindow(QMainWindow):
             f"Перевод: {result.translation_engine_name}. "
             f"{result_label}.{dirty_note}{warning}"
         )
-        logger.info("OCR scan completed with %s boxes", len(result.boxes))
+        logger.info(
+            "[%s] OCR scan completed with %s boxes",
+            self.active_scan_id or "scan",
+            len(result.boxes),
+        )
 
     def on_scan_failed(self, message: str) -> None:
         if self.scan_restore_overlay:
             self.overlay_window.show_overlay()
         self.set_status(f"OCR не смог захватить область: {message}")
-        logger.error("OCR scan failed: %s", message)
+        logger.error("[%s] OCR scan failed: %s", self.active_scan_id or "scan", message)
 
     def on_scan_thread_finished(self) -> None:
         self.set_scan_busy(False)
@@ -637,7 +695,8 @@ class MainWindow(QMainWindow):
         self.scan_worker = None
         self.scan_restore_overlay = False
         self.scan_restart_live = False
-        logger.info("OCR scan worker thread finished")
+        logger.info("[%s] OCR scan worker thread finished", self.active_scan_id or "scan")
+        self.active_scan_id = ""
 
     def set_scan_busy(self, busy: bool) -> None:
         self.scan_button.setEnabled(not busy)

@@ -67,9 +67,15 @@ class OcrPipeline:
         self.ocr_cache_order.clear()
         logger.info("OCR pipeline preset changed to %s", preset_id)
 
-    def scan_area(self, area: TranslationArea, style: OverlayStyle) -> PipelineResult:
+    def scan_area(
+        self,
+        area: TranslationArea,
+        style: OverlayStyle,
+        scan_id: str = "scan",
+    ) -> PipelineResult:
         logger.info(
-            "Scanning area x=%s y=%s size=%sx%s with engine=%s",
+            "[%s] Scanning area x=%s y=%s size=%sx%s with engine=%s",
+            scan_id,
             area.x,
             area.y,
             area.width,
@@ -77,25 +83,30 @@ class OcrPipeline:
             self.engine.name,
         )
         region = ScreenRect(area.x, area.y, area.width, area.height)
-        image = grab_screen_qimage(region)
-        return self.scan_image(area, style, image)
+        image = grab_screen_qimage(region, diagnostic_label=scan_id)
+        return self.scan_image(area, style, image, scan_id)
 
     def scan_image(
         self,
         area: TranslationArea,
         style: OverlayStyle,
         image: QImage,
+        scan_id: str = "scan",
     ) -> PipelineResult:
+        pipeline_started = time.perf_counter()
         logger.info(
-            "Running OCR pipeline on prepared image size=%sx%s with engine=%s",
+            "[%s] Running OCR pipeline on prepared image size=%sx%s with engine=%s "
+            "translator=%s",
+            scan_id,
             image.width(),
             image.height(),
             self.engine.name,
+            self.translator.name,
         )
         warning = ""
         engine_name = self.engine.name
         try:
-            detections = self.recognize_with_cache(image)
+            detections = self.recognize_with_cache(image, scan_id)
         except OcrEngineUnavailable as exc:
             logger.warning("OCR engine is unavailable: %s", exc)
             warning = f"{exc} Перевод невозможен без OCR."
@@ -121,7 +132,7 @@ class OcrPipeline:
             warning = f"Основной OCR не сработал ({exc}); показан fallback."
 
         if not detections:
-            logger.info("OCR completed but found no text blocks")
+            logger.info("[%s] OCR completed but found no text blocks", scan_id)
             return PipelineResult(
                 boxes=[
                     self.build_diagnostic_box(
@@ -137,9 +148,15 @@ class OcrPipeline:
             )
 
         original_count = len(detections)
-        detections = self.prepare_detections(detections, image)
+        prepare_started = time.perf_counter()
+        detections = self.prepare_detections(detections, image, scan_id)
+        logger.info(
+            "[%s] Detection preparation finished in %.3fs",
+            scan_id,
+            time.perf_counter() - prepare_started,
+        )
         if not detections:
-            logger.info("OCR text blocks were filtered out as noise")
+            logger.info("[%s] OCR text blocks were filtered out as noise", scan_id)
             return PipelineResult(
                 boxes=[
                     self.build_diagnostic_box(
@@ -154,15 +171,20 @@ class OcrPipeline:
                 diagnostic=True,
             )
         logger.info(
-            "OCR detections prepared: raw=%s prepared=%s",
+            "[%s] OCR detections prepared: raw=%s prepared=%s",
+            scan_id,
             original_count,
             len(detections),
         )
 
         translation_started = time.perf_counter()
-        translated_texts, translation_warning = self.translate_detections(detections)
+        translated_texts, translation_warning = self.translate_detections(
+            detections,
+            scan_id,
+        )
         logger.info(
-            "Translation stage finished in %.3fs",
+            "[%s] Translation stage finished in %.3fs",
+            scan_id,
             time.perf_counter() - translation_started,
         )
         if translation_warning:
@@ -200,7 +222,12 @@ class OcrPipeline:
                     translated_text=translated_texts[index],
                 )
             )
-        logger.info("Pipeline produced %s overlay boxes", len(boxes))
+        logger.info(
+            "[%s] Pipeline produced %s overlay boxes in %.3fs total",
+            scan_id,
+            len(boxes),
+            time.perf_counter() - pipeline_started,
+        )
         return PipelineResult(
             boxes=boxes,
             engine_name=engine_name,
@@ -208,16 +235,38 @@ class OcrPipeline:
             warning=warning,
         )
 
-    def recognize_with_cache(self, image: QImage) -> list[DetectedText]:
+    def recognize_with_cache(
+        self,
+        image: QImage,
+        scan_id: str = "scan",
+    ) -> list[DetectedText]:
+        cache_started = time.perf_counter()
         cache_key = ocr_image_cache_key(image)
+        logger.info(
+            "[%s] OCR image cache key computed in %.3fs key=%s cache_items=%s",
+            scan_id,
+            time.perf_counter() - cache_started,
+            cache_key[:12],
+            len(self.ocr_cache),
+        )
         cached = self.ocr_cache.get(cache_key)
         if cached is not None:
-            logger.info("OCR cache hit for prepared image")
+            logger.info(
+                "[%s] OCR cache hit for prepared image; detections=%s",
+                scan_id,
+                len(cached),
+            )
             return list(cached)
 
+        logger.info("[%s] OCR cache miss; running engine=%s", scan_id, self.engine.name)
         ocr_started = time.perf_counter()
         detections = self.engine.recognize(image)
-        logger.info("OCR stage finished in %.3fs", time.perf_counter() - ocr_started)
+        logger.info(
+            "[%s] OCR stage finished in %.3fs with %s detections",
+            scan_id,
+            time.perf_counter() - ocr_started,
+            len(detections),
+        )
         self.remember_ocr_result(cache_key, detections)
         return detections
 
@@ -232,13 +281,23 @@ class OcrPipeline:
         self,
         detections: list[DetectedText],
         image: QImage,
+        scan_id: str = "scan",
     ) -> list[DetectedText]:
         filtered = [
             detection
             for detection in detections
             if self.is_meaningful_detection(detection, image)
         ]
-        return merge_nearby_detections(filtered)
+        merged = merge_nearby_detections(filtered)
+        logger.debug(
+            "[%s] Detection filter details: raw=%s filtered=%s merged=%s samples=%s",
+            scan_id,
+            len(detections),
+            len(filtered),
+            len(merged),
+            detection_samples(merged),
+        )
+        return merged
 
     def is_meaningful_detection(
         self,
@@ -255,11 +314,27 @@ class OcrPipeline:
             return False
         return True
 
-    def translate_detections(self, detections: list[DetectedText]) -> tuple[list[str], str]:
+    def translate_detections(
+        self,
+        detections: list[DetectedText],
+        scan_id: str = "scan",
+    ) -> tuple[list[str], str]:
         source_texts = [str(detection.text) for detection in detections]
+        total_chars = sum(len(text) for text in source_texts)
+        logger.info(
+            "[%s] Translation input: blocks=%s chars=%s engine=%s",
+            scan_id,
+            len(source_texts),
+            total_chars,
+            self.translator.name,
+        )
         try:
             translated = self.translator.translate_batch(source_texts)
-            logger.info("Translation completed for %s text blocks", len(translated))
+            logger.info(
+                "[%s] Translation completed for %s text blocks",
+                scan_id,
+                len(translated),
+            )
             return translated, ""
         except TranslationUnavailable as exc:
             logger.warning("Translation engine is unavailable: %s", exc)
@@ -367,6 +442,19 @@ class DetectionGroup:
 
 def normalize_detection_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
+
+
+def detection_samples(detections: list[DetectedText], limit: int = 5) -> list[str]:
+    samples: list[str] = []
+    for detection in detections[:limit]:
+        text = normalize_detection_text(detection.text)
+        if len(text) > 80:
+            text = f"{text[:77]}..."
+        samples.append(
+            f"{detection.x},{detection.y} {detection.width}x{detection.height} "
+            f"conf={detection.confidence:.2f} text={text!r}"
+        )
+    return samples
 
 
 def ocr_image_cache_key(image: QImage) -> str:

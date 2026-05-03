@@ -25,6 +25,7 @@ class CaptureThread(QThread):
         self.fps = fps
         self.running = False
         self.frame_count = 0
+        self.total_loop_seconds = 0.0
 
     def set_fps(self, fps: int) -> None:
         self.fps = max(1, min(MAX_PREVIEW_FPS, int(fps)))
@@ -38,6 +39,7 @@ class CaptureThread(QThread):
     def run(self) -> None:
         self.running = True
         self.frame_count = 0
+        self.total_loop_seconds = 0.0
         logger.info(
             "Capture thread started for screen x=%s y=%s size=%sx%s at %s FPS",
             self.screen.x,
@@ -55,21 +57,40 @@ class CaptureThread(QThread):
                         self.frame_captured.emit(frame)
                         self.frame_count += 1
                         if self.frame_count % 120 == 0:
-                            logger.debug("Captured %s preview frames", self.frame_count)
+                            average_ms = (
+                                self.total_loop_seconds / max(1, self.frame_count) * 1000
+                            )
+                            logger.debug(
+                                "Captured %s preview frames; average capture loop %.1fms",
+                                self.frame_count,
+                                average_ms,
+                            )
                 except Exception as exc:  # noqa: BLE001 - thread boundary
                     logger.exception("Screen capture failed")
                     self.capture_error.emit(str(exc))
                 elapsed = time.perf_counter() - started
+                self.total_loop_seconds += elapsed
                 interval = 1 / max(1, min(MAX_PREVIEW_FPS, self.fps))
                 remaining = max(0.001, interval - elapsed)
                 self.msleep(round(remaining * 1000))
         logger.info("Capture thread stopped after %s frames", self.frame_count)
 
 
-def grab_screen_qimage(screen: ScreenRect, backend: Any | None = None) -> QImage:
+def grab_screen_qimage(
+    screen: ScreenRect,
+    backend: Any | None = None,
+    diagnostic_label: str | None = None,
+) -> QImage:
     if backend is None:
+        backend_started = time.perf_counter()
         with mss.mss() as local_backend:
-            return grab_screen_qimage(screen, local_backend)
+            if diagnostic_label:
+                logger.info(
+                    "[%s] MSS backend opened in %.3fs",
+                    diagnostic_label,
+                    time.perf_counter() - backend_started,
+                )
+            return grab_screen_qimage(screen, local_backend, diagnostic_label)
 
     monitor = {
         "left": screen.x,
@@ -77,11 +98,28 @@ def grab_screen_qimage(screen: ScreenRect, backend: Any | None = None) -> QImage
         "width": screen.width,
         "height": screen.height,
     }
+    started = time.perf_counter()
     raw = backend.grab(monitor)
-    return QImage(
+    grabbed_at = time.perf_counter()
+    image = QImage(
         raw.bgra,
         raw.width,
         raw.height,
         raw.width * 4,
         QImage.Format.Format_RGB32,
     ).copy()
+    finished_at = time.perf_counter()
+    if diagnostic_label:
+        logger.info(
+            "[%s] Screen capture x=%s y=%s size=%sx%s: mss=%.3fs qimage_copy=%.3fs "
+            "total=%.3fs",
+            diagnostic_label,
+            screen.x,
+            screen.y,
+            screen.width,
+            screen.height,
+            grabbed_at - started,
+            finished_at - grabbed_at,
+            finished_at - started,
+        )
+    return image

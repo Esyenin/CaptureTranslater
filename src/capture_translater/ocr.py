@@ -93,6 +93,7 @@ class PytesseractOcrEngine:
             image.height(),
             self.languages,
         )
+        started = time.perf_counter()
         qimage = image.convertToFormat(QImage.Format.Format_RGBA8888)
         data = bytes(qimage.bits())
         pil_image = Image.frombytes(
@@ -104,12 +105,14 @@ class PytesseractOcrEngine:
             qimage.bytesPerLine(),
             1,
         )
+        converted_at = time.perf_counter()
         raw = pytesseract.image_to_data(
             pil_image,
             lang=self.languages,
             config="--psm 6",
             output_type=Output.DICT,
         )
+        recognized_at = time.perf_counter()
         grouped: dict[tuple[int, int, int], dict[str, object]] = {}
         for index, raw_text in enumerate(raw.get("text", [])):
             text = str(raw_text).strip()
@@ -165,7 +168,16 @@ class PytesseractOcrEngine:
                     confidence=sum(confidences) / max(1, len(confidences)),
                 )
             )
-        logger.info("pytesseract produced %s text line detections", len(detections))
+        finished_at = time.perf_counter()
+        logger.info(
+            "pytesseract produced %s text line detections: convert=%.3fs "
+            "image_to_data=%.3fs parse=%.3fs total=%.3fs",
+            len(detections),
+            converted_at - started,
+            recognized_at - converted_at,
+            finished_at - recognized_at,
+            finished_at - started,
+        )
         return detections
 
     @staticmethod
@@ -194,8 +206,11 @@ class PaddleOcrEngine:
         return True
 
     def recognize(self, image: QImage) -> list[DetectedText]:
+        started = time.perf_counter()
         working_image, scale = self.preprocess_image(image)
+        preprocessed_at = time.perf_counter()
         array = qimage_to_rgb_array(working_image)
+        converted_at = time.perf_counter()
         logger.info(
             "Running PaddleOCR preset=%s size=%sx%s scale=%.2f",
             self.preset.id,
@@ -205,10 +220,14 @@ class PaddleOcrEngine:
         )
 
         raw_result = None
-        started = time.perf_counter()
+        model_elapsed = 0.0
+        predict_elapsed = 0.0
         for attempt in range(2):
+            model_started = time.perf_counter()
             model = self.get_model()
+            model_elapsed += time.perf_counter() - model_started
             try:
+                predict_started = time.perf_counter()
                 if hasattr(model, "predict"):
                     raw_result = model.predict(array)
                 else:
@@ -216,35 +235,51 @@ class PaddleOcrEngine:
                         array,
                         cls=self.preset.use_textline_orientation,
                     )
+                predict_elapsed += time.perf_counter() - predict_started
                 break
             except Exception:
                 self.clear_model()
                 if attempt > 0:
                     raise
                 logger.exception("PaddleOCR prediction failed; retrying with fresh model")
-        elapsed = time.perf_counter() - started
+        predicted_at = time.perf_counter()
         if raw_result is None:
             raise RuntimeError("PaddleOCR returned no result")
 
         detections = parse_paddle_result(raw_result, self.preset.confidence_threshold)
+        parsed_at = time.perf_counter()
         if abs(scale - 1.0) > 0.001:
             detections = [scale_detection(detection, 1 / scale) for detection in detections]
+        finished_at = time.perf_counter()
         logger.info(
-            "PaddleOCR produced %s detections in %.3fs",
+            "PaddleOCR produced %s detections: preprocess=%.3fs qimage_to_numpy=%.3fs "
+            "model=%.3fs predict=%.3fs parse=%.3fs scale=%.3fs total=%.3fs",
             len(detections),
-            elapsed,
+            preprocessed_at - started,
+            converted_at - preprocessed_at,
+            model_elapsed,
+            predict_elapsed,
+            parsed_at - predicted_at,
+            finished_at - parsed_at,
+            finished_at - started,
         )
         return detections
 
     def get_model(self) -> object:
         current_thread_id = threading.get_ident()
         if self.model is not None and self.model_thread_id == current_thread_id:
+            logger.debug("PaddleOCR model cache hit for thread=%s", current_thread_id)
             return self.model
         if self.model is not None:
             logger.info("Recreating PaddleOCR model after worker thread change")
             self.clear_model()
 
+        runtime_started = time.perf_counter()
         configure_paddle_runtime()
+        logger.info(
+            "Paddle runtime configured in %.3fs",
+            time.perf_counter() - runtime_started,
+        )
 
         from paddleocr import PaddleOCR
 
@@ -252,9 +287,15 @@ class PaddleOcrEngine:
         last_error: Exception | None = None
         for kwargs in candidates:
             try:
+                init_started = time.perf_counter()
                 logger.info("Initializing PaddleOCR with kwargs=%s", kwargs)
                 self.model = PaddleOCR(**kwargs)
                 self.model_thread_id = current_thread_id
+                logger.info(
+                    "PaddleOCR model initialized in %.3fs on thread=%s",
+                    time.perf_counter() - init_started,
+                    current_thread_id,
+                )
                 return self.model
             except TypeError as exc:
                 last_error = exc
