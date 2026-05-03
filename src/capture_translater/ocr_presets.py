@@ -15,20 +15,50 @@ class OcrPreset:
     use_doc_unwarping: bool = False
     use_textline_orientation: bool = False
     upscale_factor: float = 1.0
+    text_det_limit_side_len: int | None = None
+    text_det_limit_type: str | None = None
+    text_recognition_batch_size: int | None = None
 
 
 DEFAULT_OCR_PRESET_ID = "paddle_english"
 
 OCR_PRESETS: tuple[OcrPreset, ...] = (
     OcrPreset(
-        id="paddle_english",
-        label="PaddleOCR: английский",
+        id="paddle_english_ultrafast",
+        label="PaddleOCR: английский ультрабыстрый",
         description=(
-            "Быстрый основной режим для английских переводов манги и маньхуа."
+            "Максимально быстрый режим для крупного текста. Может пропускать мелкие строки."
         ),
         engine_kind="paddle",
         language="en",
         confidence_threshold=0.40,
+        text_det_limit_side_len=128,
+        text_det_limit_type="max",
+        text_recognition_batch_size=16,
+    ),
+    OcrPreset(
+        id="paddle_english",
+        label="PaddleOCR: английский сбалансированный",
+        description=(
+            "Быстрее точного режима, но сохраняет больше мелкого текста, чем ультрабыстрый."
+        ),
+        engine_kind="paddle",
+        language="en",
+        confidence_threshold=0.40,
+        text_det_limit_side_len=480,
+        text_det_limit_type="max",
+        text_recognition_batch_size=16,
+    ),
+    OcrPreset(
+        id="paddle_english_accurate",
+        label="PaddleOCR: английский точный",
+        description=(
+            "Точный режим PP-OCRv5 без жесткого ограничения detector-а; заметно медленнее."
+        ),
+        engine_kind="paddle",
+        language="en",
+        confidence_threshold=0.40,
+        text_recognition_batch_size=16,
     ),
     OcrPreset(
         id="paddle_japanese",

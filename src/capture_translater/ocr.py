@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from dataclasses import dataclass
 from math import floor
 from typing import Protocol
@@ -202,15 +203,21 @@ class PaddleOcrEngine:
             scale,
         )
 
+        started = time.perf_counter()
         if hasattr(model, "predict"):
             raw_result = model.predict(array)
         else:
             raw_result = model.ocr(array, cls=self.preset.use_textline_orientation)
+        elapsed = time.perf_counter() - started
 
         detections = parse_paddle_result(raw_result, self.preset.confidence_threshold)
         if abs(scale - 1.0) > 0.001:
             detections = [scale_detection(detection, 1 / scale) for detection in detections]
-        logger.info("PaddleOCR produced %s detections", len(detections))
+        logger.info(
+            "PaddleOCR produced %s detections in %.3fs",
+            len(detections),
+            elapsed,
+        )
         return detections
 
     def get_model(self) -> object:
@@ -242,6 +249,14 @@ class PaddleOcrEngine:
         }
         if self.preset.language:
             new_api_kwargs["lang"] = self.preset.language
+        if self.preset.text_det_limit_side_len is not None:
+            new_api_kwargs["text_det_limit_side_len"] = self.preset.text_det_limit_side_len
+        if self.preset.text_det_limit_type is not None:
+            new_api_kwargs["text_det_limit_type"] = self.preset.text_det_limit_type
+        if self.preset.text_recognition_batch_size is not None:
+            new_api_kwargs["text_recognition_batch_size"] = (
+                self.preset.text_recognition_batch_size
+            )
 
         old_api_kwargs: dict[str, object] = {
             "use_angle_cls": self.preset.use_textline_orientation,

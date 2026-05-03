@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
         self.overlay_checkbox = QCheckBox("Показать overlay")
         self.overlay_edit_checkbox = QCheckBox("Редактировать окна overlay")
         self.scan_button = QPushButton("Сканировать область")
+        self.scan_button_default_text = "Сканировать область"
         self.clear_overlay_button = QPushButton("Очистить overlay")
         self.save_button = QPushButton("Сохранить")
         self.ocr_preset_combo = QComboBox()
@@ -478,6 +479,14 @@ class MainWindow(QMainWindow):
             self.set_status(f"Не удалось обновить кадр: {exc}")
 
     def on_overlay_toggled(self, enabled: bool) -> None:
+        if enabled and not self.overlay_window.boxes:
+            self.overlay_checkbox.blockSignals(True)
+            self.overlay_checkbox.setChecked(False)
+            self.overlay_checkbox.blockSignals(False)
+            self.set_status("Overlay пуст. Сначала нажми «Сканировать область».")
+            logger.info("Overlay show ignored because there are no boxes")
+            return
+
         self.overlay_window.set_style(self.saved_settings.style)
         self.overlay_window.set_edit_mode(self.overlay_edit_checkbox.isChecked())
         if enabled:
@@ -490,6 +499,14 @@ class MainWindow(QMainWindow):
         logger.info("Overlay visibility toggled: %s", enabled)
 
     def on_overlay_edit_toggled(self, enabled: bool) -> None:
+        if enabled and not self.overlay_window.boxes:
+            self.overlay_edit_checkbox.blockSignals(True)
+            self.overlay_edit_checkbox.setChecked(False)
+            self.overlay_edit_checkbox.blockSignals(False)
+            self.set_status("Редактировать можно после появления OCR-окон.")
+            logger.info("Overlay edit ignored because there are no boxes")
+            return
+
         if enabled and not self.overlay_checkbox.isChecked():
             self.overlay_checkbox.setChecked(True)
         self.overlay_window.set_edit_mode(enabled)
@@ -624,6 +641,7 @@ class MainWindow(QMainWindow):
 
     def set_scan_busy(self, busy: bool) -> None:
         self.scan_button.setEnabled(not busy)
+        self.scan_button.setText("Сканирую..." if busy else self.scan_button_default_text)
         self.clear_overlay_button.setEnabled(not busy)
         self.ocr_preset_combo.setEnabled(not busy)
         self.live_checkbox.setEnabled(not busy)

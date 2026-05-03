@@ -41,6 +41,9 @@ class UnavailableTranslator:
 class DeepTranslatorEngine:
     name = "deep-translator: Google -> ru"
 
+    def __init__(self) -> None:
+        self.cache: dict[str, str] = {}
+
     @classmethod
     def available(cls) -> bool:
         try:
@@ -56,8 +59,39 @@ class DeepTranslatorEngine:
 
         clean_texts = [text.strip() for text in texts]
         logger.info("Translating %s OCR text blocks to Russian", len(clean_texts))
+        translated = [""] * len(clean_texts)
+        missing_texts: list[str] = []
+        missing_indices: list[int] = []
+        for index, text in enumerate(clean_texts):
+            if not text:
+                continue
+            cached = self.cache.get(text)
+            if cached is None:
+                missing_indices.append(index)
+                missing_texts.append(text)
+            else:
+                translated[index] = cached
+
+        if not missing_texts:
+            logger.info("Translation cache satisfied all %s blocks", len(clean_texts))
+            return translated
+
+        logger.info(
+            "Translation cache hits=%s misses=%s",
+            len(clean_texts) - len(missing_texts),
+            len(missing_texts),
+        )
         translator = GoogleTranslator(source="auto", target="ru")
-        return self.translate_in_chunks(translator, clean_texts)
+        translated_missing = self.translate_in_chunks(translator, missing_texts)
+        for index, source, target in zip(
+            missing_indices,
+            missing_texts,
+            translated_missing,
+            strict=True,
+        ):
+            translated[index] = target
+            self.cache[source] = target
+        return translated
 
     def translate_in_chunks(
         self,
