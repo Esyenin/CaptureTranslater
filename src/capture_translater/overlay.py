@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QWidget
 
 from .boxes import TranslationBox
 from .constants import APP_NAME
+from .font_manager import readable_font_family
 from .geometry import clamp
 from .models import OverlayStyle, ScreenRect
 from .text_painter import draw_outlined_text
@@ -133,7 +134,9 @@ class OverlayWindow(QWidget):
         painter.setPen(QPen(QColor(self.style.border_color), 1))
         painter.drawRect(marker)
         painter.setPen(QColor(self.style.text_color))
-        painter.setFont(QFont(self.style.font_family, 10, QFont.Weight.Bold))
+        painter.setFont(
+            QFont(readable_font_family(self.style.font_family), 10, QFont.Weight.Bold)
+        )
         painter.drawText(marker, Qt.AlignmentFlag.AlignCenter, "T")
 
     def draw_edit_hint(self, painter: QPainter) -> None:
@@ -147,8 +150,9 @@ class OverlayWindow(QWidget):
 
     def fitted_font(self, text: str, rect: QRectF) -> QFont:
         start_size = max(6, self.style.font_size)
+        family = readable_font_family(self.style.font_family)
         for size in range(start_size, 5, -1):
-            font = QFont(self.style.font_family, size)
+            font = QFont(family, size)
             metrics = QFontMetrics(font)
             bounds = metrics.boundingRect(
                 0,
@@ -160,7 +164,7 @@ class OverlayWindow(QWidget):
             )
             if bounds.height() <= rect.height():
                 return font
-        return QFont(self.style.font_family, 6)
+        return QFont(family, 6)
 
     def mouseDoubleClickEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
         if not self.edit_mode or event.button() != Qt.MouseButton.LeftButton:

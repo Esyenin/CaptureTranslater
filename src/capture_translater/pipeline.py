@@ -3,6 +3,8 @@
 import logging
 from dataclasses import dataclass
 
+from PySide6.QtGui import QImage
+
 from .boxes import TranslationBox
 from .capture import grab_screen_qimage
 from .geometry import clamp
@@ -66,6 +68,20 @@ class OcrPipeline:
         )
         region = ScreenRect(area.x, area.y, area.width, area.height)
         image = grab_screen_qimage(region)
+        return self.scan_image(area, style, image)
+
+    def scan_image(
+        self,
+        area: TranslationArea,
+        style: OverlayStyle,
+        image: QImage,
+    ) -> PipelineResult:
+        logger.info(
+            "Running OCR pipeline on prepared image size=%sx%s with engine=%s",
+            image.width(),
+            image.height(),
+            self.engine.name,
+        )
         warning = ""
         engine_name = self.engine.name
         try:

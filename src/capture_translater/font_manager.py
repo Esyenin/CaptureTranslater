@@ -10,6 +10,15 @@ from .constants import CUSTOM_FONT_EXTENSIONS
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_READABLE_FONT = "Segoe UI"
+TEXT_UNFRIENDLY_FONT_KEYWORDS = (
+    "fluent icons",
+    "mdl2 assets",
+    "wingdings",
+    "webdings",
+    "marlett",
+    "symbol",
+)
 
 
 @dataclass(frozen=True)
@@ -69,3 +78,18 @@ def unique_font_paths(paths: list[str]) -> list[str]:
             unique.append(normalized)
             seen.add(normalized)
     return unique
+
+
+def readable_font_family(family: str) -> str:
+    """Avoid icon-only system fonts that make translated text look invisible."""
+    normalized = family.casefold()
+    if not normalized:
+        return DEFAULT_READABLE_FONT
+    if any(keyword in normalized for keyword in TEXT_UNFRIENDLY_FONT_KEYWORDS):
+        logger.warning(
+            "Font %s is icon/symbol-oriented; using %s",
+            family,
+            DEFAULT_READABLE_FONT,
+        )
+        return DEFAULT_READABLE_FONT
+    return family

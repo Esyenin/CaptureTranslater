@@ -25,6 +25,7 @@ from .constants import (
     MIN_AREA_SIZE,
     PREVIEW_BACKGROUND,
 )
+from .font_manager import readable_font_family
 from .geometry import clamp, clamp_area_to_screen
 from .models import AppSettings, OverlayStyle, ScreenRect, TranslationArea
 from .text_painter import draw_outlined_text
@@ -343,6 +344,7 @@ class PreviewWidget(QOpenGLWidget):
     def draw_style_sample(self, painter: QPainter) -> None:
         area = self.settings.area
         style = self.settings.style
+        family = readable_font_family(style.font_family)
         if area.width < 48 or area.height < 48:
             return
 
@@ -383,7 +385,7 @@ class PreviewWidget(QOpenGLWidget):
                 max(8, sample_height - padding * 2 - outline_width * 2),
             ),
             sample_text,
-            QFont(style.font_family, font_size),
+            QFont(family, font_size),
             style.text_color,
             style.text_outline_color,
             outline_width,
@@ -398,8 +400,9 @@ class PreviewWidget(QOpenGLWidget):
         max_height: float,
     ) -> int:
         target_size = max(1, round(style.font_size * self.preview_scale))
+        family = readable_font_family(style.font_family)
         for size in range(target_size, 0, -1):
-            font = QFont(style.font_family, size)
+            font = QFont(family, size)
             metrics = QFontMetrics(font)
             rect = metrics.boundingRect(
                 0,
