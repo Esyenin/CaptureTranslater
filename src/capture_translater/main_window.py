@@ -676,6 +676,8 @@ class MainWindow(QMainWindow):
     def should_mask_widget(self, widget: QWidget) -> bool:
         if not widget.isVisible():
             return False
+        if widget is self.overlay_window:
+            return False
         if widget is self:
             return True
         if self.isAncestorOf(widget):

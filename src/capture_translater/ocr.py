@@ -2,6 +2,7 @@
 
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from math import floor
@@ -180,6 +181,7 @@ class PaddleOcrEngine:
         self.preset = preset
         self.name = f"paddleocr:{preset.id}"
         self.model: object | None = None
+        self.model_thread_id: int | None = None
 
     @classmethod
     def available(cls) -> bool:
@@ -192,7 +194,6 @@ class PaddleOcrEngine:
         return True
 
     def recognize(self, image: QImage) -> list[DetectedText]:
-        model = self.get_model()
         working_image, scale = self.preprocess_image(image)
         array = qimage_to_rgb_array(working_image)
         logger.info(
@@ -203,12 +204,27 @@ class PaddleOcrEngine:
             scale,
         )
 
+        raw_result = None
         started = time.perf_counter()
-        if hasattr(model, "predict"):
-            raw_result = model.predict(array)
-        else:
-            raw_result = model.ocr(array, cls=self.preset.use_textline_orientation)
+        for attempt in range(2):
+            model = self.get_model()
+            try:
+                if hasattr(model, "predict"):
+                    raw_result = model.predict(array)
+                else:
+                    raw_result = model.ocr(
+                        array,
+                        cls=self.preset.use_textline_orientation,
+                    )
+                break
+            except Exception:
+                self.clear_model()
+                if attempt > 0:
+                    raise
+                logger.exception("PaddleOCR prediction failed; retrying with fresh model")
         elapsed = time.perf_counter() - started
+        if raw_result is None:
+            raise RuntimeError("PaddleOCR returned no result")
 
         detections = parse_paddle_result(raw_result, self.preset.confidence_threshold)
         if abs(scale - 1.0) > 0.001:
@@ -221,8 +237,12 @@ class PaddleOcrEngine:
         return detections
 
     def get_model(self) -> object:
-        if self.model is not None:
+        current_thread_id = threading.get_ident()
+        if self.model is not None and self.model_thread_id == current_thread_id:
             return self.model
+        if self.model is not None:
+            logger.info("Recreating PaddleOCR model after worker thread change")
+            self.clear_model()
 
         configure_paddle_runtime()
 
@@ -234,12 +254,17 @@ class PaddleOcrEngine:
             try:
                 logger.info("Initializing PaddleOCR with kwargs=%s", kwargs)
                 self.model = PaddleOCR(**kwargs)
+                self.model_thread_id = current_thread_id
                 return self.model
             except TypeError as exc:
                 last_error = exc
                 logger.debug("PaddleOCR constructor rejected kwargs=%s", kwargs)
 
         raise RuntimeError(f"PaddleOCR constructor failed: {last_error}")
+
+    def clear_model(self) -> None:
+        self.model = None
+        self.model_thread_id = None
 
     def constructor_candidates(self) -> list[dict[str, object]]:
         new_api_kwargs: dict[str, object] = {
@@ -354,6 +379,12 @@ def configure_paddle_runtime() -> None:
     os.environ.setdefault("FLAGS_use_mkldnn", "0")
     os.environ.setdefault("FLAGS_use_onednn", "0")
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+    try:
+        import paddle
+
+        paddle.disable_static()
+    except Exception:
+        logger.debug("Could not force Paddle dynamic mode", exc_info=True)
 
 
 def qimage_to_rgb_array(image: QImage) -> object:
