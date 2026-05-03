@@ -4,7 +4,7 @@ import logging
 import sys
 from typing import Any
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPoint, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -67,8 +67,13 @@ class OverlayWindow(QWidget):
 
     def set_edit_mode(self, enabled: bool) -> None:
         self.edit_mode = enabled
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not enabled)
-        self.apply_windows_click_through(not enabled)
+        if sys.platform == "win32":
+            # On Windows we use WM_NCHITTEST to pass clicks through only where
+            # there is no translation box. That keeps double-click hide usable.
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            self.apply_windows_click_through(False)
+        else:
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not enabled)
         logger.info("Overlay edit mode set to %s", enabled)
         self.update()
 
@@ -81,7 +86,7 @@ class OverlayWindow(QWidget):
         )
         self.show()
         self.raise_()
-        self.apply_windows_click_through(not self.edit_mode)
+        self.apply_windows_click_through(False)
         logger.info("Overlay shown")
 
     def paintEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
@@ -167,7 +172,7 @@ class OverlayWindow(QWidget):
         return QFont(family, 6)
 
     def mouseDoubleClickEvent(self, event: Any) -> None:  # noqa: N802 - Qt API
-        if not self.edit_mode or event.button() != Qt.MouseButton.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         box = self.box_at(event.position())
         if box is None:
@@ -242,6 +247,33 @@ class OverlayWindow(QWidget):
 
     def marker_rect(self, box: TranslationBox) -> QRectF:
         return QRectF(box.x - self.screen.x, box.y - self.screen.y, 28, 24)
+
+    def nativeEvent(self, event_type: Any, message: Any) -> tuple[bool, int]:  # noqa: N802
+        if sys.platform != "win32":
+            return super().nativeEvent(event_type, message)
+
+        import ctypes
+        from ctypes import wintypes
+
+        wm_nchittest = 0x0084
+        httransparent = -1
+        htclient = 1
+        msg = wintypes.MSG.from_address(int(message))
+        if msg.message != wm_nchittest:
+            return super().nativeEvent(event_type, message)
+
+        point = self.global_point_from_lparam(msg.lParam)
+        if self.box_at(QPointF(self.mapFromGlobal(point))) is None:
+            return True, httransparent
+        return True, htclient
+
+    @staticmethod
+    def global_point_from_lparam(lparam: int) -> QPoint:
+        import ctypes
+
+        x = ctypes.c_short(lparam & 0xFFFF).value
+        y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+        return QPoint(x, y)
 
     def apply_windows_click_through(self, enabled: bool) -> None:
         if sys.platform != "win32" or not self.winId():
